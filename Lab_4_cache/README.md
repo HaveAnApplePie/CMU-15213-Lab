@@ -11,7 +11,8 @@ Here are some tricks I use:
 1. block, and the block size is 8.
 2. For each line in the blocks on the diagonal(Matix A), readthe number on the diagonal last, which can readuce the miss.
 #### 64 x 64
-This case is the most difficult. I found if I use the block size of 4 , it will have 1651 miss which can not meet the requirements.
+This case is the most difficult. I write my detailed ideas in my blog page -- [cmu15213-cachelab](https://haveanapplepie.github.io/posts/tech/cmu15213-cachelab/).  
+I found if I use the block size of 4 , it will have 1651 miss which can not meet the requirements.
 Here is a brief description of the tricks I use:
 1. block, and the big block size is 8. And it divides the matrix into 64 blocks(8 diagonal blocks, 56 off-diagonal blocks).
 2. For each line in the blocks on the diagonal(Matix A), readthe number on the diagonal last, which can readuce the miss.
