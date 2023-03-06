@@ -1,9 +1,6 @@
 #include <stdio.h>
 #include "csapp.h"
-
-/* Recommended max cache and object sizes */
-#define MAX_CACHE_SIZE 1049000
-#define MAX_OBJECT_SIZE 102400
+#include "cache.h"
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
@@ -12,7 +9,7 @@ static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64;
 void proxy(int fd);
 int parse_uri(char *uri, char* domain, char* port, char *path);
 int read_parse_hdrs(rio_t *rp, char* domain, char* headers);
-int connect_server(char* host, char* port, char* buf, int webfd);
+int connect_server(char* host, char* port, char* path, char* buf, char* obj, int webfd);
 void *thread(void *vargp);
 
 int main(int argc, char **argv)
@@ -32,6 +29,9 @@ int main(int argc, char **argv)
     /* Listen */
     listenfd = Open_listenfd(argv[1]);
 
+    /* Initial cache */
+    mallocCache();
+
     /* Main loop */
     while(1){
         clientlen = sizeof(clientaddr);
@@ -45,6 +45,8 @@ int main(int argc, char **argv)
 
     }
 
+    /* destroy cache */
+    freeCache();
 
     printf("End\n");
     return 0;
@@ -72,6 +74,17 @@ void proxy(int fd){
 
     parse_uri(uri,domain,port,path);
 
+    // /* search cache whether the objects is already in cache */
+    char object[MAX_OBJECT_SIZE],resp[MAXLINE];
+    int respNum;
+    if(loadObject(domain,path,object,resp,&respNum)){
+        //printf("%s\n",resp);
+        Rio_writen(fd, resp, respNum);
+
+        Rio_writen(fd,object,MAX_OBJECT_SIZE);
+        return;
+    }
+
     /* build new request line */
     sprintf(buf,"%s %s HTTP/1.0\r\n",method,path);
     printf("New request: %s\n", buf);
@@ -81,7 +94,7 @@ void proxy(int fd){
     sprintf(buf,"%s%s",buf,headers);
 
     /* Connect to server, get response */
-    connect_server(domain, port, buf, fd);
+    connect_server(domain, port, path, buf, object, fd);
 
     /* Send response back to client */
     //Rio_writen(fd, rebuf, strlen(rebuf));
@@ -170,21 +183,56 @@ int read_parse_hdrs(rio_t *rp, char* domain, char* headers){
     return 0;
 }
 
-int connect_server(char* host, char* port, char* buf, int webfd){
+int connect_server(char* host, char* port, char* path, char* buf, char* obj, int webfd){
     int clientfd;
     rio_t rio;
-    char line[MAXLINE];
-    size_t n;
+    char line[MAXLINE],head[MAXLINE],remain[MAXLINE];
+    char resp[MAXLINE];
+    size_t n,filesize,respNum;
+    respNum = 0;
 
     clientfd = Open_clientfd(host, port);
     Rio_readinitb(&rio, clientfd);
+    
 
     Rio_writen(clientfd, buf, MAXLINE);
-    while((n = Rio_readlineb(&rio, line, MAXLINE)) != 0){
-        printf("server received %d bytes\n", (int)n);
-        Rio_writen(webfd, line, n);
-    }
+    // while((n = Rio_readlineb(&rio, line, MAXLINE)) != 0){
+    //     printf("server received %d bytes\n", (int)n);
+    //     Rio_writen(webfd, line, n);
+    // }
 
+    printf("Server response:\n");
+    n = Rio_readlineb(&rio, line, MAXLINE);
+    memcpy(resp+respNum,line,n);
+    respNum += n;
+    //Rio_writen(webfd, line, n);
+    while(strcmp(line,"\r\n")){
+        //printf("server received %d bytes\n", (int)n);
+        printf("%s", line);
+        sscanf(line,"%s %s",head,remain);
+        if(!strcmp(head,"Content-length:")){
+            sscanf(remain,"%ld\r\n",&filesize);
+        }
+        n = Rio_readlineb(&rio, line, MAXLINE);
+        memcpy(resp+respNum,line,n);
+        respNum += n;
+        //Rio_wrtien(webfd, line, n);
+    }
+    Rio_writen(webfd, resp, respNum);
+
+    if(filesize > MAX_OBJECT_SIZE){
+        while((n = Rio_readlineb(&rio, line, MAXLINE)) != 0){
+            printf("server received %d bytes\n", (int)n);
+            Rio_writen(webfd, line, n);
+        }
+    }
+    else{
+        Rio_readnb(&rio, obj, filesize);
+        
+        storeObject(host,path,obj,resp,respNum);
+        Rio_writen(webfd, obj, filesize);
+    }
+    
     Close(clientfd);
 
     return 0;
