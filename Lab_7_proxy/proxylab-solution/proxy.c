@@ -13,13 +13,15 @@ void proxy(int fd);
 int parse_uri(char *uri, char* domain, char* port, char *path);
 int read_parse_hdrs(rio_t *rp, char* domain, char* headers);
 int connect_server(char* host, char* port, char* buf, int webfd);
+void *thread(void *vargp);
 
 int main(int argc, char **argv)
 {
-    int listenfd, connfd;
+    int listenfd, *connfdp;
     char hostname[MAXLINE], port[MAXLINE];
     socklen_t clientlen;
     struct sockaddr_storage clientaddr;
+    pthread_t tid;
 
     /* Check command line args */
     if (argc != 2){
@@ -33,12 +35,13 @@ int main(int argc, char **argv)
     /* Main loop */
     while(1){
         clientlen = sizeof(clientaddr);
-        connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);   //Accept
+        connfdp = Malloc(sizeof(int));       //thread
+        *connfdp = Accept(listenfd, (SA *)&clientaddr, &clientlen);   //Accept
         Getnameinfo((SA *) &clientaddr, clientlen, hostname, MAXLINE,
                     port, MAXLINE, 0);
         printf("Accepted connection form (%s, %s)\n", hostname, port);
-        proxy(connfd);
-        Close(connfd);
+        
+        Pthread_create(&tid, NULL, thread, connfdp);
 
     }
 
@@ -185,4 +188,15 @@ int connect_server(char* host, char* port, char* buf, int webfd){
     Close(clientfd);
 
     return 0;
+}
+
+void *thread(void *vargp){
+    int connfd = *((int *)vargp);
+    Pthread_detach(pthread_self());
+    Free(vargp);
+
+    proxy(connfd);
+    Close(connfd);
+
+    return NULL;
 }
