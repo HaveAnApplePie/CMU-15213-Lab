@@ -12,7 +12,7 @@ static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64;
 void proxy(int fd);
 int parse_uri(char *uri, char* domain, char* port, char *path);
 int read_parse_hdrs(rio_t *rp, char* domain, char* headers);
-int connect_server(char* host, char* port, char* buf, char* rebuf);
+int connect_server(char* host, char* port, char* buf, int webfd);
 
 int main(int argc, char **argv)
 {
@@ -78,11 +78,10 @@ void proxy(int fd){
     sprintf(buf,"%s%s",buf,headers);
 
     /* Connect to server, get response */
-    char rebuf[MAXLINE];
-    connect_server(domain, port, buf, rebuf);
+    connect_server(domain, port, buf, fd);
 
     /* Send response back to client */
-    Rio_writen(fd, rebuf, strlen(rebuf));
+    //Rio_writen(fd, rebuf, strlen(rebuf));
 
 }
 
@@ -168,7 +167,7 @@ int read_parse_hdrs(rio_t *rp, char* domain, char* headers){
     return 0;
 }
 
-int connect_server(char* host, char* port, char* buf, char* rebuf){
+int connect_server(char* host, char* port, char* buf, int webfd){
     int clientfd;
     rio_t rio;
     char line[MAXLINE];
@@ -180,7 +179,7 @@ int connect_server(char* host, char* port, char* buf, char* rebuf){
     Rio_writen(clientfd, buf, MAXLINE);
     while((n = Rio_readlineb(&rio, line, MAXLINE)) != 0){
         printf("server received %d bytes\n", (int)n);
-        sprintf(rebuf,"%s%s",rebuf,line);
+        Rio_writen(webfd, line, n);
     }
 
     Close(clientfd);
