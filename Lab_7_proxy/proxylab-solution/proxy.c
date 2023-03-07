@@ -9,7 +9,7 @@ static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64;
 void proxy(int fd);
 int parse_uri(char *uri, char* domain, char* port, char *path);
 int read_parse_hdrs(rio_t *rp, char* domain, char* headers);
-int connect_server(char* host, char* port, char* path, char* buf, char* obj, int webfd);
+int connect_server(char* host, char* port, char* path, char* buf, int webfd);
 void *thread(void *vargp);
 
 int main(int argc, char **argv)
@@ -35,7 +35,9 @@ int main(int argc, char **argv)
     /* Main loop */
     while(1){
         clientlen = sizeof(clientaddr);
+
         connfdp = Malloc(sizeof(int));       //thread
+        
         *connfdp = Accept(listenfd, (SA *)&clientaddr, &clientlen);   //Accept
         Getnameinfo((SA *) &clientaddr, clientlen, hostname, MAXLINE,
                     port, MAXLINE, 0);
@@ -52,10 +54,17 @@ int main(int argc, char **argv)
     return 0;
 }
 
+
+/*
+ *  proxy — Main function. It will receive the request sent by
+ *        the client and send it to the server after processing.
+ *        Then forward the return information from server to client.
+ */
 void proxy(int fd){
     rio_t rio;
     char buf[MAXLINE],method[MAXLINE],uri[MAXLINE],version[MAXLINE];
     char domain[MAXLINE],port[MAXLINE],path[MAXLINE],headers[MAXLINE];
+    
     /* Read request line*/
     Rio_readinitb(&rio, fd);
     if(!Rio_readlineb(&rio, buf, MAXLINE)){
@@ -74,40 +83,45 @@ void proxy(int fd){
 
     parse_uri(uri,domain,port,path);
 
-    // /* search cache whether the objects is already in cache */
+    /* search cache whether the objects is already in cache */
     char object[MAX_OBJECT_SIZE],resp[MAXLINE];
     int respNum;
     if(loadObject(domain,path,object,resp,&respNum)){
-        //printf("%s\n",resp);
+        /* Send the cached headers */
         Rio_writen(fd, resp, respNum);
-
+        
+        /* Send the cached object */
         Rio_writen(fd,object,MAX_OBJECT_SIZE);
         return;
     }
 
     /* build new request line */
     sprintf(buf,"%s %s HTTP/1.0\r\n",method,path);
-    printf("New request: %s\n", buf);
+    printf("New request line: %s\n", buf);
 
     /* Read and parse request headers */
     read_parse_hdrs(&rio, domain, headers);
+
+    /* Now buf store the new request */
     sprintf(buf,"%s%s",buf,headers);
 
-    /* Connect to server, get response */
-    connect_server(domain, port, path, buf, object, fd);
-
-    /* Send response back to client */
-    //Rio_writen(fd, rebuf, strlen(rebuf));
-
+    /* Connect to server, get response and send to client */
+    connect_server(domain, port, path, buf, fd);
 }
 
+/*
+ * parse_uri - Parse the uri, divide it to domain, port and path.
+ *          If there is no port in uri, port will be set to "80".
+ *          If the uri format is right, it will return 0, else 
+ *          return -1.
+ */
 int parse_uri(char *uri, char* domain, char* port, char *path){
     char *start = strstr(uri,"//");
 
     if(start){
         start += 2; // "//" occupies two characters
         char* mid = strchr(start, ':');
-        if(mid){
+        if(mid){    // port exists
             strncpy(domain, start, mid-start);
             domain[mid-start] = '\0';
             
@@ -122,9 +136,8 @@ int parse_uri(char *uri, char* domain, char* port, char *path){
                 path[0] = '/';
                 path[1] = '\0';
             }            
-
         }
-        else{
+        else{   // port not exists
             sprintf(port,"80");
             char* end = strchr(start, '/');
             if(end){
@@ -147,6 +160,11 @@ int parse_uri(char *uri, char* domain, char* port, char *path){
     }
 }
 
+
+/*
+ * read_parse_hdrs - Read the headers sent from client, and build
+ *          the new headers to meet the requirements of the lab 4.2.
+ */
 int read_parse_hdrs(rio_t *rp, char* domain, char* headers){
     char line[MAXLINE],head[MAXLINE],remain[MAXLINE];
 
@@ -171,6 +189,7 @@ int read_parse_hdrs(rio_t *rp, char* domain, char* headers){
         Rio_readlineb(rp, line, MAXLINE);
         printf("%s", line);
         sscanf(line,"%s %s",head,remain);
+        //ignore these headers
         if(!strcmp(head,"User-Agent:") || !strcmp(head,"Connection:") || !strcmp(head,"Proxy-Connection:")){
             ;
         }
@@ -183,54 +202,64 @@ int read_parse_hdrs(rio_t *rp, char* domain, char* headers){
     return 0;
 }
 
-int connect_server(char* host, char* port, char* path, char* buf, char* obj, int webfd){
+
+
+/*
+ * connect_server - Connect to the "host" at "port" with the new request
+ *          in "buf". And then send the reply message to the client fp "webfd".
+ *          Also, it should store the object in cache with key "host" and "path".
+ */
+int connect_server(char* host, char* port, char* path, char* buf, int webfd){
+    /* build connect to server */
     int clientfd;
     rio_t rio;
-    char line[MAXLINE],head[MAXLINE],remain[MAXLINE];
-    char resp[MAXLINE];
-    size_t n,filesize,respNum;
-    respNum = 0;
 
     clientfd = Open_clientfd(host, port);
     Rio_readinitb(&rio, clientfd);
-    
-
     Rio_writen(clientfd, buf, MAXLINE);
-    // while((n = Rio_readlineb(&rio, line, MAXLINE)) != 0){
-    //     printf("server received %d bytes\n", (int)n);
-    //     Rio_writen(webfd, line, n);
-    // }
+
+    /* send the reply message to the client fp "webfd" */
+    char resp[MAXLINE];     //store the headers of response message
+    char line[MAXLINE],head[MAXLINE],remain[MAXLINE];
+    size_t n,filesize,respNum;
+    respNum = 0;
 
     printf("Server response:\n");
+    
     n = Rio_readlineb(&rio, line, MAXLINE);
     memcpy(resp+respNum,line,n);
     respNum += n;
+
     //Rio_writen(webfd, line, n);
+
     while(strcmp(line,"\r\n")){
         //printf("server received %d bytes\n", (int)n);
-        printf("%s", line);
+        //printf("%s", line);
+
         sscanf(line,"%s %s",head,remain);
         if(!strcmp(head,"Content-length:")){
-            sscanf(remain,"%ld\r\n",&filesize);
+            sscanf(remain,"%ld\r\n",&filesize);     //store the size of the object to receive
         }
         n = Rio_readlineb(&rio, line, MAXLINE);
         memcpy(resp+respNum,line,n);
         respNum += n;
-        //Rio_wrtien(webfd, line, n);
     }
-    Rio_writen(webfd, resp, respNum);
+    Rio_writen(webfd, resp, respNum);   //send to client
 
-    if(filesize > MAX_OBJECT_SIZE){
+
+    /* sent object to client and store the headers and object in cache */
+
+    if(filesize > MAX_OBJECT_SIZE){ //if filesize is too big, then just send to client
         while((n = Rio_readlineb(&rio, line, MAXLINE)) != 0){
             printf("server received %d bytes\n", (int)n);
             Rio_writen(webfd, line, n);
         }
     }
-    else{
-        Rio_readnb(&rio, obj, filesize);
-        
-        storeObject(host,path,obj,resp,respNum);
-        Rio_writen(webfd, obj, filesize);
+    else{   //send and cache
+        char object[MAX_OBJECT_SIZE];
+        Rio_readnb(&rio, object, filesize);
+        storeObject(host,path,object,resp,respNum);
+        Rio_writen(webfd, object, filesize);
     }
     
     Close(clientfd);
@@ -238,9 +267,14 @@ int connect_server(char* host, char* port, char* path, char* buf, char* obj, int
     return 0;
 }
 
+
+/*
+ *  thread —— thread function, which calls proxy()
+ */
 void *thread(void *vargp){
+
     int connfd = *((int *)vargp);
-    Pthread_detach(pthread_self());
+    Pthread_detach(pthread_self()); //detach thread
     Free(vargp);
 
     proxy(connfd);
